@@ -1,0 +1,13 @@
+# Sanal ortam klasörleri (gerek yok, çok yer kaplar)
+.venv/
+venv/
+.idea/
+
+# Python önbellek dosyaları
+__pycache__/
+*.pyc
+
+# Özel anahtarların olduğu dosyalar (KESİNLİKLE GİTMEMELİ)
+.env
+secrets.toml
+api_keys.txt

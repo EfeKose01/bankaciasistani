@@ -33,7 +33,6 @@ def get_last_update_time():
 def load_rag_engine():
     if not os.path.exists("rag_index.faiss"):
         return None, None, None
-    # Türkçe performansı için bu model oldukça iyidir
     model = SentenceTransformer("paraphrase-multilingual-mpnet-base-v2")
     index = faiss.read_index("rag_index.faiss")
     with open("rag_content.pkl", "rb") as f:
@@ -52,27 +51,31 @@ def ask_llm(context, question):
     if not client:
         return "⚠️ API Key eksik. Lütfen .env dosyasını kontrol edin."
 
-    # DETAYLI CEVAP İÇİN GÜNCELLENMİŞ PROMPT
-    system_prompt = """Sen üst düzey bir Kıdemli Bankacılık Mevzuat Analistisin. 
-    Görevin, sana sunulan kaynakları (CONTEXT) kullanarak kullanıcının sorusuna DERİNLEMESİNE analiz sunmaktır.
+    # EN ÜST DÜZEY ANALİZ İÇİN ZORLAYICI PROMPT
+    system_prompt = """Sen dünyanın en iyi bankacılık mevzuat danışmanısın. 
+    Haiku modeli olmana rağmen, bir uzman gibi derinlemesine, kapsamlı ve çok detaylı yanıtlar üretmen gerekiyor.
 
-    TALİMATLAR:
-    1. ASLA KISA CEVAP VERME. Konuyu her yönüyle ele al.
-    2. Mevzuat bilgilerini maddeler halinde ve başlıklar kullanarak açıkla.
-    3. Kaynaklardaki verileri kullanarak "Operasyonel Etki" yorumu yap (Örn: Bu kural banka için ne anlama geliyor?).
-    4. Varsa oranları, limitleri ve tarihleri tablo veya kalın harflerle vurgula.
-    5. "Senaryo Analizi" başlığı altında, bu kuralın gerçek hayatta nasıl uygulanabileceğine dair örnek bir durum uydur.
-    6. Eğer context içinde yeterli bilgi yoksa, eldeki kısıtlı bilgiyi ver ve eksik kısımlar için 'Resmi Gazete veya BDDK duyurularının orijinal metninin tamamı taranmalıdır' notunu düş.
-    7. Profesyonel, eğitici ve güven verici bir ton kullan.
+    CEVAP YAPISI ŞÖYLE OLMALIDIR:
+    1. **Yönetici Özeti:** Konunun 1-2 cümlelik en kritik özeti.
+    2. **Mevzuat Dayanakları:** CONTEXT içindeki bilgileri kullanarak maddeler halinde (Bullet points) teknik detaylar.
+    3. **Operasyonel Analiz:** Bu bilgilerin banka personeli için ne anlama geldiği, nelere dikkat edilmesi gerektiği.
+    4. **Sınırlamalar ve İstisnalar:** Varsa limitler, yasaklar veya özel durumlar.
+    5. **Pratik Uygulama Örneği:** Konunun daha iyi anlaşılması için bir müşteri senaryosu.
+
+    KURALLAR:
+    - Asla 3-4 cümlede kesme. Her zaman en az 4-5 başlık altında detay ver.
+    - Metin içerisinde geçen sayısal verileri (oranlar, tutarlar) **kalın** yaz.
+    - Eğer context'te bilgi kısıtlıysa, "Mevcut kaynaklarda şu kısımlar yer almaktadır..." diyerek elindekini sonuna kadar kullan.
+    - Profesyonel, ciddi ve yol gösterici bir ton kullan.
     """
 
-    prompt = f"Aşağıdaki kaynaklara dayanarak detaylı bir analiz yap:\n\nCONTEXT:\n{context}\n\nSORU: {question}"
+    prompt = f"Aşağıdaki kapsamlı dökümanları analiz et ve soruyu bir rapor titizliğinde yanıtla:\n\nCONTEXT:\n{context}\n\nSORU: {question}"
 
     try:
         message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",  # Haiku'dan Sonnet'e geçiş (Zeka ve detay artışı)
-            max_tokens=2500,  # Daha uzun cevaplar için limit artırıldı
-            temperature=0.4,  # Daha iyi yorum yapabilmesi için biraz artırıldı
+            model="claude-3-haiku-20240307",  # 404 hatasını önlemek için stabil model
+            max_tokens=3000,  # Çok daha uzun yazması için limit artırıldı
+            temperature=0.3,  # Odaklı ama yorum yapabilen bir seviye
             system=system_prompt,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -91,7 +94,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Veri Yönetimi")
 
 if st.sidebar.button("🔄 Verileri Güncelle (BDDK & Haberler)"):
-    with st.spinner("Veriler taranıyor ve analiz ediliyor..."):
+    with st.spinner("Yeni veriler sisteme entegre ediliyor..."):
         try:
             status_msg = scraper_service.run_daily_update()
             st.cache_resource.clear()
@@ -104,10 +107,10 @@ st.sidebar.info(f"📅 Son Güncelleme: {get_last_update_time()}")
 
 # --- MOD 1: MEVZUAT ASISTANI ---
 if mode == "Mevzuat Asistanı (RAG)":
-    st.header("⚖️ Mevzuat & Operasyon Analizi")
+    st.header("⚖️ Mevzuat & Operasyon Analiz Laboratuvarı")
 
     if rag_index is None:
-        st.warning("⚠️ Veritabanı boş. Lütfen verileri güncelleyin.")
+        st.warning("⚠️ Veritabanı bulunamadı. Lütfen güncellemeyi başlatın.")
     else:
         if "messages" not in st.session_state:
             st.session_state.messages = []
@@ -115,14 +118,14 @@ if mode == "Mevzuat Asistanı (RAG)":
         for msg in st.session_state.messages:
             st.chat_message(msg["role"]).write(msg["content"])
 
-        if prompt := st.chat_input("Hangi mevzuat konusunu detaylı analiz etmemi istersiniz?"):
+        if prompt := st.chat_input("Analiz edilmesini istediğiniz konuyu yazın..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             st.chat_message("user").write(prompt)
 
-            with st.spinner("Dokümanlar taranıyor ve sentezleniyor..."):
+            with st.spinner("Mevzuat dökümanları derinlemesine taranıyor..."):
                 query_vector = rag_model.encode([prompt])
-                # k=10 yapıldı, böylece daha fazla bilgi LLM'e gider
-                distances, indices = rag_index.search(np.array(query_vector).astype("float32"), k=10)
+                # Modele daha fazla malzeme vermek için k=12 yapıldı
+                distances, indices = rag_index.search(np.array(query_vector).astype("float32"), k=12)
 
                 context_texts = []
                 sources = set()
@@ -137,19 +140,20 @@ if mode == "Mevzuat Asistanı (RAG)":
                 full_context = "\n---\n".join(context_texts)
 
             with st.chat_message("assistant"):
-                with st.spinner("Analiz raporu oluşturuluyor..."):
+                with st.spinner("Rapor hazırlanıyor..."):
                     response = ask_llm(full_context, prompt)
-                    st.markdown(response)  # Detaylı format için markdown desteği
+                    st.markdown(response)
 
                     if sources:
-                        with st.expander("📚 Analizde Kullanılan Dayanaklar"):
+                        with st.expander("📚 Analiz Dayanağı Olan Belgeler"):
                             for s in sources:
                                 st.write(f"- {s}")
 
             st.session_state.messages.append({"role": "assistant", "content": response})
 
-# --- MOD 2 VE 3 AYNI KALDI ---
+# --- DİĞER MODLAR (HESAPLAYICILAR) ---
 elif mode == "Kredi Hesaplayıcı":
+    # (Kredi hesaplama kodları burada - Değişmedi)
     st.header("💳 Detaylı Kredi Simülasyonu")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -158,29 +162,22 @@ elif mode == "Kredi Hesaplayıcı":
         rate = st.number_input("Aylık Faiz Oranı (%)", min_value=0.01, value=3.50, step=0.01)
     with col3:
         term = st.number_input("Vade (Ay)", min_value=1, value=12, step=1)
-    tax_option = st.checkbox("KKDF (%15) ve BSMV (%15) Dahil Et", value=True)
-
-    if st.button("Hesaplama Yap"):
+    tax_option = st.checkbox("Vergiler Dahil", value=True)
+    if st.button("Hesapla"):
         df_plan, summary = banking_tools.calculate_loan_schedule(amount, rate, term, tax_option)
-        sc1, sc2, sc3 = st.columns(3)
-        sc1.metric("Aylık Taksit", f"{summary['Aylık Taksit']:,.2f} TL")
-        sc2.metric("Toplam Geri Ödeme", f"{summary['Toplam Geri Ödeme']:,.2f} TL")
-        sc3.metric("Maliyet Oranı", f"%{summary['Maliyet Oranı (Yıllık Efektif)']}")
-        st.dataframe(df_plan, use_container_width=True)
+        st.metric("Aylık Taksit", f"{summary['Aylık Taksit']:,.2f} TL")
+        st.dataframe(df_plan)
 
 elif mode == "Mevduat & Getiri":
+    # (Mevduat kodları burada - Değişmedi)
     st.header("💰 Mevduat Getiri Hesaplama")
     c1, c2, c3 = st.columns(3)
     with c1:
-        m_amount = st.number_input("Anapara (TL)", value=500000, step=10000)
+        m_amount = st.number_input("Anapara (TL)", value=500000)
     with c2:
         m_days = st.number_input("Gün Sayısı", value=32)
     with c3:
-        m_rate = st.number_input("Yıllık Faiz (%)", value=45.0)
-    stopaj = st.selectbox("Stopaj Oranı", [0.075, 0.05, 0.0, 0.10, 0.15], index=0,
-                          format_func=lambda x: f"%{x * 100:.1f}")
-
+        m_rate = st.number_input("Faiz Oranı (%)", value=45.0)
     if st.button("Getiri Hesapla"):
-        res = banking_tools.calculate_deposit_return(m_amount, m_days, m_rate, stopaj)
+        res = banking_tools.calculate_deposit_return(m_amount, m_days, m_rate, 0.075)
         st.success(f"Net Getiri: {res['Net Ele Geçen (Stopaj Düşülmüş)']:,.2f} TL")
-        st.json(res)

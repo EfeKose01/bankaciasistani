@@ -8,3 +8,4 @@ faiss-cpu
 anthropic
 python-dotenv
 trafilatura
+PyPDF2

@@ -1,4 +1,3 @@
-# scraper_service.py
 import requests
 import os
 import datetime
@@ -8,28 +7,41 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 import rag_indexer
 from dotenv import load_dotenv
-
-# --- YENİ KÜTÜPHANE: Haber Metni Avcısı ---
 import trafilatura
 
 load_dotenv()
 DATA_DIR = "data"
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 
-# --- ARAMA KONULARI ---
+# --- 1. ZENGİNLEŞTİRİLMİŞ ARAMA SORGULARI ---
+# Sadece haber değil, teknik limitleri de yakalamak için
 SEARCH_QUERIES = [
-    "Türkiye ekonomisi son dakika analiz",
-    "BDDK kararları ve bankacılık sektörü",
-    "Merkez Bankası faiz kararı yorumları",
-    "Borsa İstanbul hisse önerileri ve analizleri"
+    "TCMB sermaye hareketleri genelgesi güncel değişiklikler 2026",
+    "BDDK kredi sınırlandırmaları LTV ve vade oranları güncel",
+    "Bankaların döviz kredisi kullanım şartları ve 15 milyon dolar sınırı",
+    "Resmi Gazete bankacılık ve finans tebliğleri",
+    "KKDF ve BSMV muafiyetleri son dakika"
 ]
 
-# --- PDF İNDİRİLECEK SİTELER ---
+# --- 2. GENİŞLETİLMİŞ RESMİ KAYNAK LİSTESİ ---
+# Gemini'nin bildiği yasal dayanakları çekmek için TCMB ve Resmi Gazete odaklı
 PDF_SITES = [
     {
         "name": "BDDK_Duyurular",
         "url": "https://www.bddk.org.tr/Duyurular",
         "base_url": "https://www.bddk.org.tr",
+        "limit": 5
+    },
+    {
+        "name": "TCMB_Mevzuat_Tebligler",
+        "url": "https://www.tcmb.gov.tr/wps/wcm/connect/tr/tcmb+tr/main+menu/yayinlar/mevzuat/tebligler",
+        "base_url": "https://www.tcmb.gov.tr",
+        "limit": 5
+    },
+    {
+        "name": "TCMB_Genelgeler",
+        "url": "https://www.tcmb.gov.tr/wps/wcm/connect/tr/tcmb+tr/main+menu/yayinlar/mevzuat/genelgeler",
+        "base_url": "https://www.tcmb.gov.tr",
         "limit": 3
     },
     {
@@ -48,63 +60,46 @@ def clean_filename(title):
     return title[:100]
 
 
-# --- YENİ FONKSİYON: PROFESYONEL METİN KAZIYICI ---
 def extract_full_article_text(url):
-    """
-    Trafilatura kütüphanesi kullanarak haberin ana gövdesini reklamdan arındırıp çeker.
-    """
+    """Trafilatura kullanarak haberin ana gövdesini reklamdan arındırıp çeker."""
     print(f"      📖 Derin Okuma Yapılıyor: {url[:60]}...")
     try:
-        # 1. YÖNTEM: Trafilatura (En temiz metin çekici)
         downloaded = trafilatura.fetch_url(url)
-
         if downloaded:
-            # include_comments=False -> Yorumları alma
-            # include_tables=True -> Tabloları (veri varsa) al
-            text = trafilatura.extract(downloaded, include_comments=False, include_tables=True,
-                                       date_extraction_params={'extensive_search': True})
-
-            if text and len(text) > 250:  # Çok kısa metinleri (hata mesajlarını) ele
+            text = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
+            if text and len(text) > 250:
                 return text
 
-        # 2. YÖNTEM: (Yedek) Klasik BeautifulSoup
-        # Trafilatura başarısız olursa burası devreye girer
+        # Yedek mekanizma
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.content, 'html.parser')
-
         paragraphs = soup.find_all('p')
-        full_text = ""
-        for p in paragraphs:
-            pt = p.get_text().strip()
-            if len(pt) > 60: full_text += pt + "\n\n"
-
+        full_text = "\n\n".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 60])
         return full_text if len(full_text) > 200 else None
-
     except Exception as e:
         print(f"      ⚠️ Okuma Hatası: {e}")
         return None
 
 
-# --- MODÜL 1: GOOGLE SERPER İLE HABER BUL VE OKU ---
 def fetch_and_read_news():
     if not SERPER_API_KEY:
         print("❌ .env dosyasında SERPER_API_KEY eksik!")
         return
 
-    print("📡 Google üzerinden haberler bulunuyor...")
-
+    print("📡 Google ve Finans Kaynakları üzerinden teknik veriler toplanıyor...")
     url = "https://google.serper.dev/search"
     headers = {'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json'}
 
-    daily_content = f"TARİH: {datetime.date.today()}\nKAYNAK: Google Haberleri (Trafilatura ile Full Metin)\n\n"
+    daily_content = f"TARİH: {datetime.date.today()}\nBİLGİ TÜRÜ: Güncel Mevzuat ve Haber Analizi\n\n"
     news_count = 0
 
     for query in SEARCH_QUERIES:
-        print(f"   🔎 Konu: '{query}'")
+        print(f"   🔎 Teknik Tarama: '{query}'")
         try:
-            payload = json.dumps({"q": query, "gl": "tr", "hl": "tr", "num": 3, "tbs": "qdr:d"})  # Son 24 saat
+            payload = json.dumps(
+                {"q": query, "gl": "tr", "hl": "tr", "num": 4, "tbs": "qdr:m"})  # Son 1 ay (Daha geniş mevzuat için)
             response = requests.post(url, headers=headers, data=payload, timeout=10)
 
             if response.status_code == 200:
@@ -113,44 +108,31 @@ def fetch_and_read_news():
                     for item in results["organic"]:
                         link = item.get("link")
                         title = item.get("title")
-                        snippet = item.get("snippet", "")
-
-                        # --- KRİTİK NOKTA: İçeriği çek ---
                         full_article = extract_full_article_text(link)
 
                         daily_content += f"BAŞLIK: {title}\nLİNK: {link}\n"
-
                         if full_article:
-                            # Tam metin bulundu
-                            daily_content += f"URUM: TAM METİN OKUNDU\nİÇERİK:\n{full_article}\n"
+                            daily_content += f"İÇERİK ANALİZİ:\n{full_article}\n"
                         else:
-                            # Okunamadı, bari özeti koyalım (HİÇ YOKTAN İYİDİR)
-                            daily_content += f"DURUM: ÖZET (Site erişimine izin vermedi)\nÖZET:\n{snippet}\n"
+                            daily_content += f"ÖZET (Tam metne ulaşılamadı): {item.get('snippet', '')}\n"
 
                         daily_content += f"{'=' * 50}\n\n"
                         news_count += 1
-
-                        # Seri istek atıp engellenmemek için bekle
-                        time.sleep(2)
-
+                        time.sleep(1)
         except Exception as e:
-            print(f"   ❌ Hata: {e}")
+            print(f"   ❌ Arama Hatası: {e}")
 
-    # Dosyaya Kaydet
     if news_count > 0:
-        filename = f"{datetime.date.today()}_Detayli_Haberler.txt"
+        filename = f"{datetime.date.today()}_Mevzuat_Haber_Analizi.txt"
         filepath = os.path.join(DATA_DIR, filename)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(daily_content)
-        print(f"✅ {news_count} adet haber işlendi ve '{filename}' dosyasına yazıldı.")
-    else:
-        print("ℹ️ Haber bulunamadı.")
+        print(f"✅ {news_count} adet veri kaynağı işlendi.")
 
 
-# --- MODÜL 2: PDF İNDİRME ---
 def download_pdf(pdf_url, save_name):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(pdf_url, stream=True, headers=headers, timeout=30)
         if response.status_code == 200:
             filepath = os.path.join(DATA_DIR, save_name)
@@ -158,7 +140,7 @@ def download_pdf(pdf_url, save_name):
             with open(filepath, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024):
                     if chunk: f.write(chunk)
-            print(f"✅ PDF İndirildi: {save_name}")
+            print(f"✅ Yeni PDF Kaydedildi: {save_name}")
             return True
         return False
     except Exception:
@@ -166,7 +148,7 @@ def download_pdf(pdf_url, save_name):
 
 
 def fetch_pdfs_from_sites():
-    print("📡 Resmi sitelerden PDF raporlar taranıyor...")
+    print("📡 Resmi Mevzuat Kanalları Taranıyor (BDDK, TCMB, MASAK)...")
     for site in PDF_SITES:
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
@@ -180,31 +162,29 @@ def fetch_pdfs_from_sites():
                 if href and href.lower().endswith('.pdf'):
                     full_url = urljoin(site['base_url'], href)
                     text = link.get_text().strip() or "Dokuman"
+                    # Dosya ismine tarih ekleyerek versiyonlama sağlıyoruz
                     filename = f"{datetime.date.today()}_{site['name']}_{clean_filename(text)}.pdf"
                     if download_pdf(full_url, filename):
                         count += 1
                     if count >= site['limit']: break
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ {site['name']} taranırken hata oluştu.")
 
 
-# --- ANA ÇALIŞTIRICI ---
 def run_daily_update():
-    print("\n--- 🚀 PROFESYONEL VERİ TARAMASI BAŞLADI ---")
-
+    print("\n--- 🚀 BANKACI ASİSTANI VERİ TABANI GENİŞLETME BAŞLADI ---")
     if not os.path.exists(DATA_DIR):
         os.makedirs(DATA_DIR)
 
-    # 1. Haberleri Bul ve İÇİNE GİRİP OKU
+    # Haber ve Duyuruları çek
     fetch_and_read_news()
-
-    # 2. PDF'leri İndir
+    # Resmi PDF'leri çek (TCMB dahil)
     fetch_pdfs_from_sites()
 
-    print("\n--- 🧠 BEYİN GÜNCELLENİYOR (Vektör İndeksleme) ---")
+    print("\n--- 🧠 YENİ BİLGİLER VEKTÖR VERİTABANINA İŞLENİYOR ---")
     rag_indexer.create_index()
 
-    return "Güncelleme Başarılı! Haberlerin tamamı (erişilebilenler) okundu."
+    return f"Güncelleme Tamamlandı. Veritabanı en güncel TCMB ve BDDK verileriyle zenginleştirildi."
 
 
 if __name__ == "__main__":
